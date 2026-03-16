@@ -1,0 +1,14 @@
+{
+    "recommendations": [
+        // C/C++ language support via clangd (replaces ms-vscode.cpptools IntelliSense)
+        "llvm-vs-code-extensions.vscode-clangd",
+        // CMake language support and syntax highlighting
+        "twxs.cmake",
+        // CMake Tools for project configuration/build integration
+        "ms-vscode.cmake-tools",
+        // Cortex-Debug for OpenOCD/J-Link GDB debugging
+        "marus25.cortex-debug",
+        // ARM assembly syntax highlighting
+        "dan-c-underwood.arm"
+    ]
+}

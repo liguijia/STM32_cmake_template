@@ -1,0 +1,39 @@
+{
+    "folders": [
+        {
+            // Project root: Makefile, CMakeLists.txt, linker script, .ioc file
+            "name": "Project Root",
+            "path": "."
+        },
+        {
+            // Your application code — write everything here.
+            // Never overwritten by STM32CubeMX regeneration.
+            "name": "User Code",
+            "path": "user"
+        },
+        {
+            // STM32CubeMX-generated: main.c, stm32xx_it.c, peripheral init
+            // Regenerated each time CubeMX runs — avoid hand-editing here.
+            "name": "Core  [CubeMX]",
+            "path": "Core"
+        },
+        {
+            // STM32CubeMX-generated: HAL + CMSIS drivers
+            // Rarely browsed; excluded from workspace search (see settings).
+            "name": "Drivers  [CubeMX]",
+            "path": "Drivers"
+        }
+    ],
+    "settings": {},
+    "extensions": {
+        "recommendations": [
+            "llvm-vs-code-extensions.vscode-clangd",
+            "twxs.cmake",
+            "ms-vscode.cmake-tools",
+            "marus25.cortex-debug",
+            "dan-c-underwood.arm"
+        ]
+    },
+    "launch": {},
+    "tasks": {}
+}

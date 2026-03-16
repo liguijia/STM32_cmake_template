@@ -1,0 +1,136 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build (Debug)",
+            "type": "shell",
+            "command": "make",
+            "args": ["PRESET=Debug"],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": {
+                "owner": "gcc-arm",
+                "fileLocation": ["relative", "${workspaceFolder}"],
+                "pattern": {
+                    "regexp": "^(.+):(\\d+):(\\d+):\\s+(warning|error):\\s+(.+)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "severity": 4,
+                    "message": 5
+                }
+            }
+        },
+        {
+            "label": "build (Release)",
+            "type": "shell",
+            "command": "make",
+            "args": ["PRESET=Release"],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "clean",
+            "type": "shell",
+            "command": "make",
+            "args": ["clean"],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "flash (pyOCD)",
+            "type": "shell",
+            "command": "make",
+            "args": ["flash"],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "flash (J-Link)",
+            "type": "shell",
+            "command": "make",
+            "args": ["flash", "FLASH_TOOL=jlink"],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            // One-time project setup: downloads toolchain, OpenOCD, installs
+            // pyOCD pack, generates OpenOCD cfg + SVD, runs cmake configure.
+            // Safe to re-run — each step skips work already done.
+            "label": "setup",
+            "type": "shell",
+            "command": "make",
+            "args": ["setup"],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "clear": true
+            },
+            "problemMatcher": []
+        },
+        {
+            // Generate .openocd/target.cfg from *.ioc / *.ld.
+            // Runs silently so it doesn't steal focus from the build panel.
+            "label": "gen openocd cfg",
+            "type": "shell",
+            "command": "python",
+            "args": ["tools/scripts/gen_openocd_cfg.py"],
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            // Used as preLaunchTask for "Debug (OpenOCD / DAPLink)".
+            // Runs the two independent tasks in parallel: build and cfg generation.
+            "label": "build + gen openocd cfg (Debug)",
+            "dependsOn": ["build (Debug)", "gen openocd cfg"],
+            "dependsOrder": "parallel",
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            // Create a new sibling project that reuses this template's tools.
+            // Prompts for the project name, then runs new_project.py.
+            "label": "new project",
+            "type": "shell",
+            "command": "python",
+            "args": ["tools/scripts/new_project.py", "${input:projectName}"],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "clear": true
+            },
+            "problemMatcher": []
+        }
+    ],
+    "inputs": [
+        {
+            "id": "projectName",
+            "type": "promptString",
+            "description": "New project name (directory will be created next to this template)"
+        }
+    ]
+}

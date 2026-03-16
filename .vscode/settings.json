@@ -1,0 +1,58 @@
+{
+    // --- clangd ---------------------------------------------------------------
+    "clangd.arguments": [
+        // Use background indexing for faster first-open
+        "--background-index",
+        // Enable clang-tidy diagnostics (rules controlled by .clangd)
+        "--clang-tidy",
+        // Don't auto-insert headers on completion (manual control preferred)
+        "--header-insertion=never",
+        // Show full signature and type info in completion popup
+        "--completion-style=detailed",
+        // Don't insert snippet placeholders for function arguments
+        "--function-arg-placeholders=false",
+        // Parallel indexing threads (adjust to CPU count)
+        "-j=4"
+    ],
+
+    // Disable Microsoft C/C++ IntelliSense — conflicts with clangd
+    "C_Cpp.intelliSenseEngine": "disabled",
+    "C_Cpp.autocomplete": "disabled",
+    "C_Cpp.errorSquiggles": "disabled",
+
+    // Enable semantic token highlighting provided by clangd
+    "editor.semanticHighlighting.enabled": true,
+
+    // --- Editor ---------------------------------------------------------------
+    "editor.formatOnSave": false,
+    "editor.rulers": [100],
+    "[c]": {
+        "editor.tabSize": 2,
+        "editor.insertSpaces": true
+    },
+
+    // --- File associations ----------------------------------------------------
+    "files.associations": {
+        "*.h": "c",
+        "*.c": "c",
+        "*.ld": "linkerscript"
+    },
+
+    // Exclude build artifacts from explorer and search
+    "files.exclude": {
+        "build/": true
+    },
+    "search.exclude": {
+        "build/": true,
+        "Drivers/": true,
+        "Core/": true
+    },
+
+    // --- Cortex-Debug -----------------------------------------------------------
+    // These paths are managed by tools/scripts/get_jlink.py and get_openocd.py.
+    // Run 'make setup' or the individual scripts to populate them.
+    // JLinkGDBServerPath is managed by tools/scripts/get_jlink.py.
+    "cortex-debug.JLinkGDBServerPath": "",
+    // openocdPath is managed by tools/scripts/get_openocd.py.
+    "cortex-debug.openocdPath": ""
+}

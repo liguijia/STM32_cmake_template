@@ -1,0 +1,36 @@
+CompileFlags:
+  # compile_commands.json is copied to the project root after each build
+  # (via `cmake -E copy` in the Makefile), so clangd always finds it here.
+  CompilationDatabase: .
+
+  Add:
+    # Explicitly set target triple so clangd uses the right ARM backend
+    - --target=arm-none-eabi
+
+  Remove:
+    # -Wpedantic triggers false positives on ARM GCC GNU extensions
+    # (e.g. zero-length arrays, __attribute__ syntax)
+    - -Wpedantic
+
+Diagnostics:
+  # Warn on headers that are included but not actually needed
+  UnusedIncludes: Strict
+
+  ClangTidy:
+    Add:
+      - bugprone-*
+      - misc-*
+    Remove:
+      # Embedded code legitimately uses implicit fallthrough and old-style casts
+      - bugprone-easily-swappable-parameters
+      - readability-identifier-naming
+      - misc-include-cleaner
+
+InlayHints:
+  Enabled: true
+  ParameterNames: true
+  DeducedTypes: true
+  Designators: true
+
+Completion:
+  AllScopes: true
