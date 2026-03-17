@@ -3,7 +3,7 @@
     "configurations": [
         {
             // ── J-Link ─────────────────────────────────────────────────────
-            // device and svdFile are managed by tools/scripts/gen_openocd_cfg.py.
+            // device, executable, and svdFile are managed by tools/scripts/gen_openocd_cfg.py.
             // Server path is managed by tools/scripts/get_jlink.py and stored
             // in cortex-debug.JLinkGDBServerPath (settings.json).
             // Run 'make gen-openocd-cfg' (or 'make setup') to populate them.
@@ -16,9 +16,9 @@
             "speed": 4000,
             "executable": "${workspaceFolder}/build/Debug/${workspaceFolderBasename}.elf",
             "runToEntryPoint": "main",
-            "preLaunchTask": "build (Debug)",
+            "preLaunchTask": "build + gen openocd cfg (Debug)",
             // Live Watch: polls selected variables while the MCU is running.
-            "liveWatch": { "enabled": true, "samplesPerSecond": 4 }
+            "liveWatch": { "enabled": true, "samplesPerSecond": 4 },
             // "svdFile": ""   ← populated by gen_openocd_cfg.py
         },
         {
@@ -37,7 +37,7 @@
             "runToEntryPoint": "main",
             "preLaunchTask": "build + gen openocd cfg (Debug)",
             // Live Watch: OpenOCD briefly halts the MCU to read memory, then resumes.
-            "liveWatch": { "enabled": true, "samplesPerSecond": 4 }
+            "liveWatch": { "enabled": true, "samplesPerSecond": 4 },
             // "svdFile": ""   ← populated by gen_openocd_cfg.py
         }
     ]

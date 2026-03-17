@@ -10,7 +10,7 @@ Reads:
 Writes:
   .openocd/target.cfg   (TCL snippet; sourced by Cortex-Debug / OpenOCD)
   <MCU>x.svd            (CMSIS-SVD peripheral description; enables register view)
-  .vscode/launch.json   (svdFile property updated automatically)
+  .vscode/launch.json   (device / executable / svdFile updated automatically)
 
 Run directly or via 'make gen-openocd-cfg'.
 """
@@ -21,6 +21,8 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+from net_fallback import fetch_bytes as curl_fetch_bytes
 
 # ---------------------------------------------------------------------------
 # OpenOCD target config file names (relative to OpenOCD scripts/target/).
@@ -53,6 +55,28 @@ def _parse_mcu_cpn(ioc_path: Path) -> "str | None":
     text = ioc_path.read_text(encoding="utf-8", errors="replace")
     m = re.search(r"^Mcu\.CPN\s*=\s*(\S+)", text, re.MULTILINE)
     return m.group(1) if m else None
+
+
+def _project_name_from_ioc(ioc_path: Path) -> str:
+    """CubeMX project name is the .ioc stem."""
+    return ioc_path.stem
+
+
+def _jlink_device_name(cpn: str) -> str:
+    """
+    Convert a CubeMX full part number to the shorter J-Link device name.
+
+    Examples:
+      STM32F334R8T6 -> STM32F334R8
+      STM32L476RGTx -> STM32L476RG
+      STM32H743VITx -> STM32H743VI
+    """
+    match = re.match(r"(STM32[A-Z0-9]+?)(?:[A-Z]\d|[A-Z]x)$", cpn, re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
+    if cpn.upper().startswith("STM32") and len(cpn) > 2:
+        return cpn[:-2].upper()
+    return cpn.upper()
 
 
 def _parse_mcu_family_from_ld(ld_path: Path) -> "str | None":
@@ -121,7 +145,14 @@ def _fetch_url(url: str, timeout: int = 15) -> "bytes | None":
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.read()
     except Exception:
-        return None
+        try:
+            return curl_fetch_bytes(
+                url,
+                headers={"User-Agent": "gen-openocd-cfg/1.0"},
+                timeout=timeout,
+            )
+        except RuntimeError:
+            return None
 
 
 def _svd_matches_series(svd_stem: str, series: str) -> bool:
@@ -199,27 +230,83 @@ def download_svd(root: Path, cpn: str) -> "Path | None":
     return dest
 
 
-def update_launch_json_svd(root: Path, svd_path: Path) -> None:
+def update_launch_json(
+    root: Path,
+    *,
+    executable_rel: "str | None" = None,
+    jlink_device: "str | None" = None,
+    svd_path: "Path | None" = None,
+) -> None:
     """
-    Set or update svdFile in every configuration in .vscode/launch.json.
-
-    Uses line-by-line processing to avoid fragile regex on JSON-with-comments:
-      - Replaces existing  "svdFile": "..."  values.
-      - Inserts a new svdFile line after each "liveWatch" line when absent.
-      - Removes stale comments that reference the old manual-download note.
+    Update launch.json fields managed by the template scripts.
     """
     launch = root / ".vscode" / "launch.json"
     if not launch.exists():
         return
 
     text = launch.read_text(encoding="utf-8")
-    rel  = svd_path.relative_to(root).as_posix()
-    val  = f"${{workspaceFolder}}/{rel}"
+    svd_rel = svd_path.relative_to(root).as_posix() if svd_path is not None else None
+    executable_val = (
+        f"${{workspaceFolder}}/{executable_rel}"
+        if executable_rel is not None
+        else None
+    )
 
-    # 1. Remove stale "uncomment / download SVD" comment lines
-    text = re.sub(r"[ \t]*//[^\n]*(?:svd|SVD)[^\n]*\n", "", text)
+    out_lines: list[str] = []
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip()
+        active = stripped if not stripped.startswith("//") else ""
+        indent = len(line) - len(line.lstrip())
 
-    # 2. Process line by line
+        if stripped.startswith("//") and "svdFile" in stripped:
+            continue
+
+        if active.startswith('"device"') and jlink_device is not None:
+            out_lines.append(" " * indent + f'"device": "{jlink_device}",\n')
+            continue
+
+        if active.startswith('"executable"') and executable_val is not None:
+            out_lines.append(" " * indent + f'"executable": "{executable_val}",\n')
+            continue
+
+        if active.startswith('"svdFile"'):
+            continue
+
+        if active.startswith('"liveWatch"') and svd_rel is not None:
+            livewatch_line = line.rstrip()
+            if not livewatch_line.endswith(","):
+                livewatch_line += ","
+            out_lines.append(livewatch_line + "\n")
+            out_lines.append(" " * indent + f'"svdFile": "${{workspaceFolder}}/{svd_rel}"\n')
+            continue
+
+        out_lines.append(line)
+
+    launch.write_text("".join(out_lines), encoding="utf-8")
+
+    updates = []
+    if executable_rel is not None:
+        updates.append(f"executable -> {executable_rel}")
+    if jlink_device is not None:
+        updates.append(f"device -> {jlink_device}")
+    if svd_rel is not None:
+        updates.append(f"svdFile -> {svd_rel}")
+    if updates:
+        print(f"  launch.json  {', '.join(updates)}")
+    return
+
+    launch = root / ".vscode" / "launch.json"
+    if not launch.exists():
+        return
+
+    text = launch.read_text(encoding="utf-8")
+    svd_rel = svd_path.relative_to(root).as_posix() if svd_path is not None else None
+    executable_val = (
+        f"${{workspaceFolder}}/{executable_rel}"
+        if executable_rel is not None
+        else None
+    )
+
     out_lines: list[str] = []
     for line in text.splitlines(keepends=True):
         stripped = line.strip().rstrip(",")
@@ -259,8 +346,8 @@ def generate(root: Path = Path("."), skip_svd: bool = False) -> Path:
     """Generate .openocd/target.cfg (and optionally download SVD)."""
 
     # ── Locate source files ─────────────────────────────────────────────────
-    ioc_files = list(root.glob("*.ioc"))
-    ld_files  = list(root.glob("*.ld"))
+    ioc_files = sorted(root.glob("*.ioc"))
+    ld_files  = sorted(root.glob("*.ld"))
 
     if not ld_files:
         sys.exit("ERROR: No *.ld linker script found in project root.")
@@ -315,17 +402,32 @@ def generate(root: Path = Path("."), skip_svd: bool = False) -> Path:
     out_path.write_text(content, encoding="utf-8")
     print(f"  Written: {out_path.relative_to(root)}")
 
+    launch_svd_path = None
+    launch_executable = None
+    launch_device = None
+    if ioc_files:
+        launch_executable = f"build/Debug/{_project_name_from_ioc(ioc_files[0])}.elf"
+        cpn = _parse_mcu_cpn(ioc_files[0])
+        if cpn:
+            launch_device = _jlink_device_name(cpn)
+
     # ── SVD download ────────────────────────────────────────────────────────
     if not skip_svd and ioc_files:
         cpn = _parse_mcu_cpn(ioc_files[0])
         if cpn:
-            svd_path = download_svd(root, cpn)
-            if svd_path:
-                update_launch_json_svd(root, svd_path)
-            else:
+            launch_svd_path = download_svd(root, cpn)
+            if not launch_svd_path:
                 print("  SVD     not found online — skipping (peripheral view unavailable)")
         else:
             print("  SVD     Mcu.CPN not found in .ioc — skipping")
+
+    if ioc_files:
+        update_launch_json(
+            root,
+            executable_rel=launch_executable,
+            jlink_device=launch_device,
+            svd_path=launch_svd_path,
+        )
 
     return out_path
 

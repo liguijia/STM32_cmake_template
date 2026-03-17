@@ -52,7 +52,7 @@
     // These paths are managed by tools/scripts/get_jlink.py and get_openocd.py.
     // Run 'make setup' or the individual scripts to populate them.
     // JLinkGDBServerPath is managed by tools/scripts/get_jlink.py.
-    "cortex-debug.JLinkGDBServerPath": "",
+    "cortex-debug.JLinkGDBServerPath": "${workspaceFolder}/tools/jlink/JLink_Windows_V840_x86_64/JLink_V840/JLinkGDBServerCL.exe",
     // openocdPath is managed by tools/scripts/get_openocd.py.
-    "cortex-debug.openocdPath": ""
+    "cortex-debug.openocdPath": "${workspaceFolder}/tools/openocd/xpack-openocd-0.12.0-7/bin/openocd.exe"
 }

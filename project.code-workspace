@@ -1,30 +1,60 @@
 {
     "folders": [
         {
-            // Project root: Makefile, CMakeLists.txt, linker script, .ioc file
-            "name": "Project Root",
+            // 项目根目录：包含所有文件（Makefile, CMakeLists.txt, .ioc, .ld 等）
+            // 后续新加入的文件也会自动显示在这里
+            "name": "📁 Project Root",
             "path": "."
         },
         {
-            // Your application code — write everything here.
-            // Never overwritten by STM32CubeMX regeneration.
-            "name": "User Code",
+            // 用户代码：你的应用代码，永远不会被 CubeMX 覆盖
+            // 推荐在这里编写所有业务逻辑
+            "name": "📝 User Code",
             "path": "user"
         },
         {
-            // STM32CubeMX-generated: main.c, stm32xx_it.c, peripheral init
-            // Regenerated each time CubeMX runs — avoid hand-editing here.
-            "name": "Core  [CubeMX]",
+            // CubeMX 生成：Core 目录（main.c, stm32xx_it.c, 外设初始化）
+            // 每次 CubeMX 重新生成时会更新，避免手动编辑
+            "name": "🔧 CubeMX: Core",
             "path": "Core"
         },
         {
-            // STM32CubeMX-generated: HAL + CMSIS drivers
-            // Rarely browsed; excluded from workspace search (see settings).
-            "name": "Drivers  [CubeMX]",
+            // CubeMX 生成：HAL/LL 驱动库
+            // 很少需要浏览，已从搜索中排除（见 settings）
+            "name": "🔧 CubeMX: Drivers",
             "path": "Drivers"
+        },
+        {
+            // CubeMX 生成：中间件（FreeRTOS, USB, LwIP 等）
+            // 仅在使用中间件时存在
+            "name": "🔧 CubeMX: Middlewares",
+            "path": "Middlewares"
+        },
+        {
+            // 构建输出：编译生成的 .elf, .bin, .hex 文件
+            // 可以在这里查看构建产物
+            "name": "🔨 Build Output",
+            "path": "build"
+        },
+        {
+            // 工具和脚本：Python 脚本、Makefile 辅助工具
+            "name": "🛠️ Tools & Scripts",
+            "path": "tools"
         }
     ],
-    "settings": {},
+    "settings": {
+        // 从搜索中排除 CubeMX 生成的驱动库和构建输出
+        "search.exclude": {
+            "**/Drivers/**": true,
+            "**/build/**": true,
+            "**/Middlewares/**": true
+        },
+        // 从文件监视中排除构建输出，减少 CPU 占用
+        "files.watcherExclude": {
+            "**/build/**": true,
+            "**/.git/**": true
+        }
+    },
     "extensions": {
         "recommendations": [
             "llvm-vs-code-extensions.vscode-clangd",

@@ -6,6 +6,7 @@ Download and manage J-Link Software Pack for embedded development.
 Usage:
     python tools/scripts/get_jlink.py              # interactive version picker
     python tools/scripts/get_jlink.py --latest     # auto-select latest version
+    python tools/scripts/get_jlink.py --version V8.40
     python tools/scripts/get_jlink.py --list       # list available versions and exit
     python tools/scripts/get_jlink.py --source system  # switch to system J-Link
     python tools/scripts/get_jlink.py --source local   # switch to local J-Link
@@ -34,6 +35,7 @@ ENV_MK       = JLINK_DIR / "env.mk"
 
 DOWNLOADS_PAGE = "https://www.segger.com/downloads/jlink/"
 INCLUDE_LINE   = "-include tools/jlink/env.mk"
+DEFAULT_VERSION = "8.40"
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 _USE_COLOR = sys.stdout.isatty() and (
@@ -111,6 +113,24 @@ def _version_key(display: str) -> tuple[int, int, int]:
         return (0, 0, 0)
     letter = ord(m.group(3).lower()) - ord("a") + 1 if m.group(3) else 0
     return (int(m.group(1)), int(m.group(2)), letter)
+
+
+def _normalize_version(version: str) -> str:
+    version = version.strip()
+    if version.lower().startswith("v"):
+        version = version[1:]
+    return version.lower()
+
+
+def _find_version(
+    versions: list[tuple[str, str]],
+    requested: str,
+) -> "tuple[str, str] | None":
+    wanted = _normalize_version(requested)
+    for ver, url in versions:
+        if _normalize_version(ver) == wanted:
+            return ver, url
+    return None
 
 
 def _extract_version_from_link(link: str) -> "str | None":
@@ -508,7 +528,13 @@ def cmd_switch(source: str) -> None:
     ok(f"Switched to: local  ({local[-1].parent.name})")
 
 
-def cmd_download(latest: bool, keep_archive: bool, no_patch: bool, proxy: "str | None") -> None:
+def cmd_download(
+    latest: bool,
+    version: "str | None",
+    keep_archive: bool,
+    no_patch: bool,
+    proxy: "str | None",
+) -> None:
     try:
         versions = get_available_versions(proxy)
     except RuntimeError as exc:
@@ -520,10 +546,23 @@ def cmd_download(latest: bool, keep_archive: bool, no_patch: bool, proxy: "str |
         sys.exit(1)
 
     # ── Version selection ──────────────────────────────────────────────────────
-    if latest:
+    default_choice = _find_version(versions, DEFAULT_VERSION)
+
+    if version is not None:
+        selected = _find_version(versions, version)
+        if selected is None:
+            error(f"Requested J-Link version not found: {version}")
+            print("Available versions (newest first):")
+            for ver, _ in versions[:15]:
+                print(f"  V{ver}")
+            sys.exit(1)
+        chosen_ver, chosen_url = selected
+        info(f"Selected requested version: V{chosen_ver}")
+    elif latest:
         chosen_ver, chosen_url = versions[0]
         info(f"Auto-selected latest: V{chosen_ver}")
     else:
+        default_ver, default_url = default_choice or versions[0]
         print()
         print("Available J-Link versions (newest first):")
         for i, (ver, _) in enumerate(versions):
@@ -533,7 +572,7 @@ def cmd_download(latest: bool, keep_archive: bool, no_patch: bool, proxy: "str |
             try:
                 raw = input(f"Select [1–{len(versions)}]  (Enter = latest): ").strip()
                 if not raw:
-                    chosen_ver, chosen_url = versions[0]
+                    chosen_ver, chosen_url = default_ver, default_url
                     break
                 idx = int(raw) - 1
                 if 0 <= idx < len(versions):
@@ -541,7 +580,7 @@ def cmd_download(latest: bool, keep_archive: bool, no_patch: bool, proxy: "str |
                     break
                 print(f"  Enter a number between 1 and {len(versions)}.")
             except (ValueError, EOFError):
-                chosen_ver, chosen_url = versions[0]
+                chosen_ver, chosen_url = default_ver, default_url
                 break
 
     info(f"Version : V{chosen_ver}")
@@ -615,6 +654,9 @@ Examples:
   python tools/scripts/get_jlink.py --latest
       Auto-download the latest version without prompting.
 
+  python tools/scripts/get_jlink.py --version V8.40
+      Download and configure the default pinned version.
+
   python tools/scripts/get_jlink.py --list
       Show local and available online versions.
 
@@ -626,6 +668,7 @@ Examples:
 """,
     )
     parser.add_argument("--latest",    action="store_true", help="Auto-select the latest version.")
+    parser.add_argument("--version",   default=None, metavar="VER", help="Download a specific version, e.g. V8.40.")
     parser.add_argument("--list",      action="store_true", help="List versions and exit.")
     parser.add_argument("--source",    choices=["local", "system"], help="Switch active source.")
     parser.add_argument("--proxy",     default=None, metavar="URL", help="HTTP/HTTPS proxy URL.")
@@ -633,6 +676,9 @@ Examples:
     parser.add_argument("--no-patch-makefile", action="store_true", help="Skip Makefile patching.")
 
     args = parser.parse_args()
+
+    if args.latest and args.version is not None:
+        parser.error("--latest cannot be used together with --version")
 
     if args.list:
         cmd_list(args.proxy)
@@ -642,6 +688,7 @@ Examples:
         return
     cmd_download(
         latest=args.latest,
+        version=args.version,
         keep_archive=args.keep_archive,
         no_patch=args.no_patch_makefile,
         proxy=args.proxy,

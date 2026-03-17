@@ -3,10 +3,11 @@
 tools/scripts/new_project.py
 Create a new STM32 project directory next to this template.
 
-The new project reuses the toolchain, OpenOCD, and J-Link already downloaded
-in the template — no re-downloading required.  Each tool's env.mk is copied
-from the template with $(CURDIR) replaced by the template's absolute path, so
-Make resolves the binaries correctly even though they live outside the project.
+The new project inherits the toolchain selection from this template. If the
+template uses a downloaded local toolchain, the generated project redirects its
+env.mk back to the template copy. If the template uses the system toolchain,
+the generated project keeps using arm-none-eabi-* from PATH. OpenOCD and
+J-Link continue to point at the template's downloaded debug tools.
 
 Usage:
     python tools/scripts/new_project.py <project-name>
@@ -47,6 +48,11 @@ TOOL_ENV_MKS = [
     "tools/jlink/env.mk",
 ]
 
+DEBUG_SETTINGS_KEYS = (
+    "cortex-debug.openocdPath",
+    "cortex-debug.JLinkGDBServerPath",
+)
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -60,7 +66,7 @@ def _copy(src: Path, dst: Path) -> None:
         shutil.copy2(src, dst)
 
 
-def _redirect_env_mk(src: Path, dst: Path, template_posix: str) -> None:
+def _redirect_env_mk(src: Path, dst: Path, template_posix: str) -> bool:
     """
     Copy src → dst, replacing every $(CURDIR) with the template's absolute path.
 
@@ -74,11 +80,62 @@ def _redirect_env_mk(src: Path, dst: Path, template_posix: str) -> None:
     redirected = text.replace("$(CURDIR)", template_posix)
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(redirected, encoding="utf-8")
+    return "$(CURDIR)" in text
 
 
 def _tool_name(rel: str) -> str:
     """'tools/openocd/env.mk'  →  'openocd'"""
     return Path(rel).parent.name
+
+
+def _extract_json_string(text: str, key: str) -> "str | None":
+    match = re.search(rf'"{re.escape(key)}"\s*:\s*"([^"]*)"', text)
+    return match.group(1) if match else None
+
+
+def _replace_json_string(text: str, key: str, value: str) -> str:
+    pattern = rf'("{re.escape(key)}"\s*:\s*)"[^"]*"'
+    if re.search(pattern, text):
+        return re.sub(pattern, lambda m: f'{m.group(1)}"{value}"', text)
+
+    stripped = text.rstrip()
+    if stripped.endswith("}"):
+        return stripped[:-1].rstrip().rstrip(",") + f',\n    "{key}": "{value}"\n}}\n'
+
+    return text
+
+
+def _patch_shared_debug_settings(project_dir: Path, template_posix: str) -> bool:
+    """
+    Rewrite copied VS Code debug tool paths to point back at the template.
+    """
+    template_settings = TEMPLATE_ROOT / ".vscode" / "settings.json"
+    project_settings = project_dir / ".vscode" / "settings.json"
+    if not template_settings.exists() or not project_settings.exists():
+        return False
+
+    template_text = template_settings.read_text(encoding="utf-8")
+    project_text = project_settings.read_text(encoding="utf-8")
+    changed = False
+
+    for key in DEBUG_SETTINGS_KEYS:
+        value = _extract_json_string(template_text, key)
+        if not value:
+            continue
+
+        value = value.replace("\\", "/")
+        if value.startswith("${workspaceFolder}/"):
+            value = f"{template_posix}/{value[len('${workspaceFolder}/'):]}"
+
+        updated = _replace_json_string(project_text, key, value)
+        if updated != project_text:
+            project_text = updated
+            changed = True
+
+    if changed:
+        project_settings.write_text(project_text, encoding="utf-8")
+
+    return changed
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -129,8 +186,20 @@ def main() -> None:
         dst = project_dir / rel
         tool = _tool_name(rel)
         if src.exists():
-            _redirect_env_mk(src, dst, template_posix)
-            print(f"  [env.mk] {rel}  (→ {TEMPLATE_ROOT.name})")
+            redirected = _redirect_env_mk(src, dst, template_posix)
+            if tool == "toolchain":
+                detail = (
+                    f"shared from {TEMPLATE_ROOT.name}"
+                    if redirected
+                    else "uses system Arm GNU Toolchain from PATH"
+                )
+            else:
+                detail = (
+                    f"shared from {TEMPLATE_ROOT.name}"
+                    if redirected
+                    else f"uses system {tool} from PATH"
+                )
+            print(f"  [env.mk] {rel}  ({detail})")
         else:
             # Tool not yet downloaded in the template — write a helpful stub.
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -146,6 +215,9 @@ def main() -> None:
             print(f"  [stub]   {rel}  (run 'make setup-{tool}' in template first)")
 
     # ── 3. Rename workspace file ───────────────────────────────────────────────
+    if _patch_shared_debug_settings(project_dir, template_posix):
+        print("  [vscode] .vscode/settings.json  (shared debug tool paths from template)")
+
     ws_src = project_dir / "project.code-workspace"
     ws_dst = project_dir / f"{name}.code-workspace"
     if ws_src.exists():

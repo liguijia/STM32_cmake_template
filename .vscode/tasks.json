@@ -94,8 +94,8 @@
             // Runs silently so it doesn't steal focus from the build panel.
             "label": "gen openocd cfg",
             "type": "shell",
-            "command": "python",
-            "args": ["tools/scripts/gen_openocd_cfg.py"],
+            "command": "make",
+            "args": ["gen-openocd-cfg"],
             "presentation": {
                 "reveal": "silent",
                 "panel": "shared"
@@ -103,11 +103,11 @@
             "problemMatcher": []
         },
         {
-            // Used as preLaunchTask for "Debug (OpenOCD / DAPLink)".
-            // Runs the two independent tasks in parallel: build and cfg generation.
+            // Used as preLaunchTask for both J-Link and OpenOCD debug configs.
+            // Runs gen openocd cfg first to update launch.json, then builds.
             "label": "build + gen openocd cfg (Debug)",
-            "dependsOn": ["build (Debug)", "gen openocd cfg"],
-            "dependsOrder": "parallel",
+            "dependsOn": ["gen openocd cfg", "build (Debug)"],
+            "dependsOrder": "sequence",
             "group": "build",
             "problemMatcher": []
         },
@@ -116,8 +116,8 @@
             // Prompts for the project name, then runs new_project.py.
             "label": "new project",
             "type": "shell",
-            "command": "python",
-            "args": ["tools/scripts/new_project.py", "${input:projectName}"],
+            "command": "make",
+            "args": ["new-project", "NAME=${input:projectName}"],
             "presentation": {
                 "reveal": "always",
                 "panel": "dedicated",

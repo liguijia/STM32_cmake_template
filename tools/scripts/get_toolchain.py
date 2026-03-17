@@ -5,6 +5,7 @@ Download and manage the Arm GNU Toolchain for STM32 development.
 
 Usage:
     python tools/scripts/get_toolchain.py                    # download latest, use local
+    python tools/scripts/get_toolchain.py --latest           # explicit latest alias
     python tools/scripts/get_toolchain.py --source system    # switch to system toolchain
     python tools/scripts/get_toolchain.py --source local     # switch to local toolchain
     python tools/scripts/get_toolchain.py --list             # list local toolchains
@@ -19,12 +20,17 @@ import argparse
 import os
 import platform
 import re
+import shutil
+import subprocess
 import sys
 import tarfile
 import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
+
+from net_fallback import download_file as curl_download_file
+from net_fallback import fetch_bytes as curl_fetch_bytes
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 SCRIPT_DIR    = Path(__file__).resolve().parent
@@ -59,6 +65,30 @@ def error(msg: str) -> None: print(_c("1;31", "[error]"), msg)
 
 
 # ── Platform detection ────────────────────────────────────────────────────────
+def detect_system_toolchain() -> "tuple[Path, str] | None":
+    gcc = shutil.which("arm-none-eabi-gcc")
+    if not gcc:
+        return None
+
+    gcc_path = Path(gcc).resolve()
+    try:
+        result = subprocess.run(
+            [str(gcc_path), "--version"],
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except Exception:
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    first_line = result.stdout.splitlines()[0].strip() if result.stdout else str(gcc_path)
+    return gcc_path, first_line
+
+
 def detect_platform() -> tuple[str, str]:
     """Return (host_tag, extension) for the current OS/arch."""
     system  = platform.system().lower()
@@ -86,9 +116,9 @@ def _version_key(v: str) -> tuple[int, int, int]:
     return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else (0, 0, 0)
 
 
-def get_latest_version() -> str:
+def _get_latest_version_legacy() -> str:
     """Fetch the Arm downloads page and return the latest toolchain version string."""
-    info("Querying latest Arm GNU Toolchain version …")
+    info("Querying latest Arm GNU Toolchain version ...")
     req = urllib.request.Request(
         DOWNLOADS_PAGE,
         headers={"User-Agent": "Mozilla/5.0 (compatible; get-toolchain/1.0)"},
@@ -128,6 +158,38 @@ def _make_opener(proxy: "str | None") -> urllib.request.OpenerDirector:
     return urllib.request.build_opener(*handlers)
 
 
+def _extract_latest_version(html: str) -> str:
+    versions = re.findall(r"arm-gnu-toolchain-(\d+\.\d+\.rel\d+)", html)
+    if not versions:
+        raise RuntimeError("No version strings found on downloads page")
+    return max(set(versions), key=_version_key)
+
+
+def get_latest_version(proxy: "str | None" = None) -> str:
+    """Fetch the Arm downloads page and return the latest toolchain version string."""
+    info("Querying latest Arm GNU Toolchain version ...")
+    req = urllib.request.Request(
+        DOWNLOADS_PAGE,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; get-toolchain/1.0)"},
+    )
+    try:
+        with _make_opener(proxy).open(req, timeout=20) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+    except Exception as exc:
+        warn(f"urllib failed for Arm downloads page ({exc}); retrying with curl")
+        try:
+            html = curl_fetch_bytes(
+                DOWNLOADS_PAGE,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; get-toolchain/1.0)"},
+                proxy=proxy,
+                timeout=20,
+            ).decode("utf-8", errors="replace")
+        except RuntimeError as curl_exc:
+            raise RuntimeError(f"Cannot reach downloads page: {curl_exc}") from exc
+
+    return _extract_latest_version(html)
+
+
 def _download(url: str, dest: Path, proxy: "str | None" = None) -> None:
     """
     Stream-download *url* to *dest* with a progress bar.
@@ -137,11 +199,11 @@ def _download(url: str, dest: Path, proxy: "str | None" = None) -> None:
     opener   = _make_opener(proxy)
     tmp      = Path(str(dest) + ".part")
     existing = tmp.stat().st_size if tmp.exists() else 0
+    total = 0
+    downloaded = existing
 
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "Mozilla/5.0 (compatible; get-toolchain/1.0)"},
-    )
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; get-toolchain/1.0)"}
+    req = urllib.request.Request(url, headers=headers)
     if existing:
         req.add_header("Range", f"bytes={existing}-")
         info(f"Resuming from {existing / 1_048_576:.1f} MB")
@@ -160,7 +222,6 @@ def _download(url: str, dest: Path, proxy: "str | None" = None) -> None:
             if status == 206:
                 total += existing   # Content-Length is the remaining bytes
 
-            downloaded = existing
             chunk_size = 131_072   # 128 KiB
 
             mode = "ab" if existing else "wb"
@@ -178,11 +239,27 @@ def _download(url: str, dest: Path, proxy: "str | None" = None) -> None:
     except urllib.error.HTTPError as exc:
         print()
         raise RuntimeError(f"HTTP {exc.code} {exc.reason}: {url}") from exc
-    except Exception:
+    except Exception as exc:
         print()
-        raise
+        warn(f"urllib download failed ({exc}); retrying with curl")
+        curl_download_file(url, dest, headers=headers, proxy=proxy, timeout=0)
+        return
+
+    if total and downloaded < total:
+        warn(
+            f"Download ended early ({downloaded} of {total} bytes); retrying with curl"
+        )
+        curl_download_file(url, dest, headers=headers, proxy=proxy, timeout=0)
+        return
 
     tmp.rename(dest)
+
+    if not archive_is_valid(dest):
+        warn("Downloaded archive appears incomplete or corrupted; retrying with curl")
+        dest.unlink(missing_ok=True)
+        curl_download_file(url, dest, headers=headers, proxy=proxy, timeout=0)
+        if not archive_is_valid(dest):
+            raise RuntimeError(f"Downloaded archive is invalid: {dest.name}")
 
 
 def _print_progress(done: int, total: int) -> None:
@@ -231,6 +308,21 @@ def extract_archive(archive: Path, dest_dir: Path) -> None:
 
 
 # ── env.mk management ─────────────────────────────────────────────────────────
+def archive_is_valid(archive: Path) -> bool:
+    """Return True if *archive* looks structurally valid for its file type."""
+    if not archive.exists() or archive.stat().st_size == 0:
+        return False
+
+    name = archive.name
+    if name.endswith(".zip"):
+        return zipfile.is_zipfile(archive)
+    if name.endswith(".tar.xz"):
+        return tarfile.is_tarfile(archive)
+    if name.endswith(".pkg"):
+        return True
+    return False
+
+
 def write_env_mk(bin_dir: "Path | None") -> None:
     """
     Write tools/toolchain/env.mk.
@@ -369,13 +461,37 @@ def cmd_switch(source: str) -> None:
     ok(f"Switched to: local  ({best.name})")
 
 
+def _print_network_recovery_tips(base_url: str, proxy: "str | None") -> None:
+    print()
+    print("Recovery options:")
+    print("  Re-run the same command to resume from any .part file.")
+    if proxy:
+        print("  Proxy is already set; verify it can reach developer.arm.com.")
+    else:
+        print("  Use a proxy:  make setup-toolchain PROXY=http://127.0.0.1:7890")
+    if base_url == DEFAULT_BASE_URL:
+        print("  Use a mirror: make setup-toolchain TOOLCHAIN_MIRROR=<mirror-base-url>")
+    else:
+        print(f"  Current mirror: {base_url}")
+    print(
+        "  Tune slow-link detection with "
+        "STM32_DOWNLOAD_MIN_SPEED and STM32_DOWNLOAD_STALL_TIME if needed."
+    )
+
+
 # ── Download mode ─────────────────────────────────────────────────────────────
+def _should_try_windows_i686_fallback(exc: RuntimeError) -> bool:
+    message = str(exc).upper()
+    return "HTTP 404" in message or "NOT FOUND" in message
+
+
 def cmd_download(
     version: "str | None",
     keep_archive: bool,
     no_patch: bool,
     base_url: str,
     proxy: "str | None",
+    prefer_system: bool,
 ) -> None:
     try:
         host_tag, ext = detect_platform()
@@ -383,10 +499,29 @@ def cmd_download(
         error(str(exc))
         sys.exit(1)
 
+    if prefer_system:
+        system_tc = detect_system_toolchain()
+        if system_tc is not None:
+            gcc_path, gcc_version = system_tc
+            info("Detected Arm GNU Toolchain in PATH")
+            info(f"GCC      : {gcc_path}")
+            info(f"Version  : {gcc_version}")
+            write_env_mk(None)
+            if not no_patch:
+                patch_makefile()
+
+            print()
+            ok("Toolchain ready: system")
+            print()
+            print("Next steps:")
+            print("  make toolchain   # verify detected toolchain")
+            print("  make             # build your project")
+            return
+
     # Resolve version
     if version is None:
         try:
-            version = get_latest_version()
+            version = get_latest_version(proxy)
         except RuntimeError as exc:
             warn(str(exc))
             warn(f"Falling back to known version: {FALLBACK_VERSION}")
@@ -412,9 +547,12 @@ def cmd_download(
         url, filename = _build_url(version, host_tag, ext, base_url)
         archive       = TOOLCHAIN_DIR / filename
 
-        if archive.exists() and not Path(str(archive) + ".part").exists():
+        if archive.exists() and not Path(str(archive) + ".part").exists() and archive_is_valid(archive):
             info(f"Archive already present: {archive.name}")
         else:
+            if archive.exists() and not archive_is_valid(archive):
+                warn(f"Existing archive is invalid; removing {archive.name}")
+                archive.unlink(missing_ok=True)
             def _try_download(h_tag: str) -> Path:
                 nonlocal tc_name, tc_path, bin_dir
                 u, fn = _build_url(version, h_tag, ext, base_url)
@@ -429,22 +567,31 @@ def cmd_download(
             try:
                 archive = _try_download(host_tag)
             except RuntimeError as exc:
-                if host_tag == "mingw-w64-x86_64":
+                if host_tag == "mingw-w64-x86_64" and _should_try_windows_i686_fallback(exc):
                     warn(str(exc))
-                    warn("Retrying with mingw-w64-i686 host …")
+                    warn("Retrying with mingw-w64-i686 host")
                     try:
                         archive = _try_download("mingw-w64-i686")
                     except RuntimeError as exc2:
                         error(str(exc2))
+                        _print_network_recovery_tips(base_url, proxy)
                         sys.exit(1)
                 else:
                     error(str(exc))
+                    _print_network_recovery_tips(base_url, proxy)
                     sys.exit(1)
+
+        if not archive_is_valid(archive):
+            error(f"Downloaded archive is invalid: {archive.name}")
+            archive.unlink(missing_ok=True)
+            _print_network_recovery_tips(base_url, proxy)
+            sys.exit(1)
 
         try:
             extract_archive(archive, TOOLCHAIN_DIR)
         except Exception as exc:
             error(f"Extraction failed: {exc}")
+            _print_network_recovery_tips(base_url, proxy)
             sys.exit(1)
 
         if not keep_archive:
@@ -480,6 +627,9 @@ Examples:
   python tools/scripts/get_toolchain.py
       Download latest toolchain and configure project to use it.
 
+  python tools/scripts/get_toolchain.py --latest
+      Explicitly request the latest toolchain version.
+
   python tools/scripts/get_toolchain.py --source system
       Switch back to the toolchain in your system PATH.
 
@@ -494,9 +644,16 @@ Examples:
 
   python tools/scripts/get_toolchain.py --keep-archive
       Download and install but keep the .zip / .tar.xz file.
+
+  python tools/scripts/get_toolchain.py --prefer-system
+      Use arm-none-eabi-gcc from PATH if already installed; otherwise download.
 """,
     )
 
+    parser.add_argument(
+        "--latest", action="store_true",
+        help="Explicitly request the latest toolchain version.",
+    )
     parser.add_argument(
         "--source", choices=["local", "system"], default=None,
         help="Switch active toolchain source without downloading.",
@@ -529,11 +686,18 @@ Examples:
         help="Keep the downloaded archive after extraction.",
     )
     parser.add_argument(
+        "--prefer-system", action="store_true",
+        help="Use arm-none-eabi-gcc from PATH if available before downloading.",
+    )
+    parser.add_argument(
         "--no-patch-makefile", action="store_true",
         help="Do not add the -include directive to the Makefile.",
     )
 
     args = parser.parse_args()
+
+    if args.latest and args.version is not None:
+        parser.error("--latest cannot be used together with --version")
 
     if args.list:
         cmd_list()
@@ -544,11 +708,12 @@ Examples:
         return
 
     cmd_download(
-        version=args.version,
+        version=None if args.latest else args.version,
         keep_archive=args.keep_archive,
         no_patch=args.no_patch_makefile,
         base_url=args.mirror or DEFAULT_BASE_URL,
         proxy=args.proxy,
+        prefer_system=args.prefer_system,
     )
 
 

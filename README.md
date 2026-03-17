@@ -42,9 +42,37 @@ Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
 
 # 安装前置工具
 scoop install python cmake ninja make git
+
+# 推荐：安装 LLVM（提供 clangd 用于代码智能提示）
+scoop install llvm
 ```
 
 安装完成后在任意终端中即可直接使用，无需手动配置环境变量。
+
+#### ARM 工具链安装
+
+本模板的 `make setup-toolchain` 会自动下载 ARM GNU 工具链。但如果遇到网络问题下载过慢，可以选择以下方案：
+
+**方案 1：手动下载后使用脚本安装**
+
+1. 从 [ARM 官网](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) 下载对应版本的压缩包（推荐 13.3.rel1）
+2. 将压缩包放到 `tools/toolchain/` 目录下
+3. 运行 `make setup-toolchain`，脚本会检测到已有压缩包并直接解压
+
+**方案 2：使用 Scoop 安装**
+
+```powershell
+# 添加 extras bucket（如果尚未添加）
+scoop bucket add extras
+
+# 安装 ARM GNU 工具链
+scoop install gcc-arm-none-eabi
+
+# 验证安装
+arm-none-eabi-gcc --version
+```
+
+使用 Scoop 安装后，工具链会自动加入 PATH，模板会使用系统工具链（无需运行 `make setup-toolchain`）。
 
 > 也可以手动从上方链接逐个下载安装，但需自行将每个工具加入系统 PATH。
 
@@ -58,7 +86,7 @@ sudo apt update
 sudo apt install python3 python3-pip cmake ninja-build make git
 
 # Arch Linux
-sudo pacman -S python cmake ninja make git
+sudo pacman -S python python-pip cmake ninja make git
 
 # Fedora
 sudo dnf install python3 cmake ninja-build make git
@@ -167,16 +195,21 @@ your-project/
 
 ### VS Code 工作区
 
-`project.code-workspace` 按功能区分文件夹：
+`project.code-workspace` 按功能区分文件夹，使用 emoji 图标便于快速识别：
 
 | 工作区文件夹 | 路径 | 说明 |
 |---|---|---|
-| Project Root | `.` | Makefile、CMakeLists.txt、.ioc、.ld |
-| User Code | `user/` | 你的应用代码 |
-| Core [CubeMX] | `Core/` | CubeMX 生成的入口和外设初始化 |
-| Drivers [CubeMX] | `Drivers/` | HAL + CMSIS 驱动 |
+| 📁 Project Root | `.` | 项目根目录所有文件（包括后续新加的） |
+| 📝 User Code | `user/` | 你的应用代码，永远不会被 CubeMX 覆盖 |
+| 🔧 CubeMX: Core | `Core/` | CubeMX 生成的入口和外设初始化 |
+| 🔧 CubeMX: Drivers | `Drivers/` | HAL + CMSIS 驱动 |
+| 🔧 CubeMX: Middlewares | `Middlewares/` | 中间件（FreeRTOS, USB, LwIP 等） |
+| 🔨 Build Output | `build/` | 编译生成的 .elf, .bin, .hex 文件 |
+| 🛠️ Tools & Scripts | `tools/` | Python 脚本和工具 |
 
-`Core/` 和 `Drivers/` 已从 VS Code 搜索中排除（`settings.json` → `search.exclude`），全局搜索只搜 `user/` 中的代码。
+优化设置：
+- CubeMX 生成的驱动库和构建输出已从搜索中排除，全局搜索只搜 `user/` 中的代码
+- 构建输出已从文件监视中排除，减少 CPU 占用
 
 ---
 
@@ -227,7 +260,7 @@ your-project/
 PRESET      ?= Debug          # 构建预设：Debug / Release / RelWithDebInfo / MinSizeRel
 PREFIX      ?= arm-none-eabi- # 工具链前缀，通常不需要改
 FLASH_TOOL  ?= pyocd          # 默认烧录工具：pyocd / jlink / openocd / cubeprog
-SERIAL_PORT ?= COM3           # 串口监视器端口
+SERIAL_PORT ?= /dev/ttyACM0   # Linux common default; Windows usually uses COMx
 SERIAL_BAUD ?= 115200         # 串口波特率
 
 # 当自动检测失败时在此手动覆盖：
@@ -277,13 +310,13 @@ make symbols                  # 导出完整符号表 (.sym)
 ```bash
 make gdbserver                # 启动 OpenOCD GDB server（终端 A）
 make gdb                      # 连接 GDB（终端 B）
-make serial SERIAL_PORT=COM3  # 打开串口监视器
+make serial SERIAL_PORT=/dev/ttyACM0  # 打开串口监视器
 ```
 
 ### 诊断
 
 ```bash
-make toolchain                # 显示检测到的工程信息和工具链版本
+make toolchain                # 显示当前工程信息和全部开发工具汇总
 make check-tools              # 验证所有工具链二进制可用
 make list-presets             # 列出可用的 CMake 预设
 make help                     # 完整帮助
@@ -292,10 +325,13 @@ make help                     # 完整帮助
 ### 初始化与新建项目
 
 ```bash
-make setup                    # 完整初始化（下载工具链、OpenOCD 等，每机一次）
+make setup                    # 完整初始化（默认并行下载工具链、OpenOCD、J-Link，并完成 pyOCD / clangd 配置，最后显示工具汇总）
 make setup-toolchain          # 仅下载工具链
 make setup-openocd            # 仅下载 OpenOCD
+make setup-python-tools       # 安装 pyocd / pyserial Python 包
+make setup-jlink              # 仅下载 J-Link Software Pack（默认 V8.40）
 make gen-openocd-cfg          # 重新生成 .openocd/target.cfg + SVD（每个新项目运行一次）
+make uninstall                # 清理 setup 下载/生成的本地状态，恢复到刚 clone 的仓库状态
 make new-project NAME=foo     # 在同级目录创建新项目，共享本模板的工具
 ```
 
@@ -305,6 +341,25 @@ make new-project NAME=foo     # 在同级目录创建新项目，共享本模板
 
 `launch.json` 中提供两个调试配置，按 `F5` 选择：
 
+### 调试配置自动同步
+
+**重要特性**：项目名称以 `.ioc` 文件名为准，调试配置会自动同步。
+
+当你第一次按 `F5` 调试时，会自动执行以下操作：
+1. 读取 `.ioc` 文件，提取项目名称和 MCU 型号
+2. 更新 `launch.json` 中的：
+   - `executable`：`build/Debug/<ioc文件名>.elf`（而非文件夹名）
+   - `device`：J-Link 设备名（如 `STM32F334R8`）
+   - `svdFile`：自动下载的 SVD 文件路径
+3. 生成 `.openocd/target.cfg`（OpenOCD 配置）
+4. 构建项目
+5. 启动调试器
+
+这意味着：
+- 即使项目文件夹名是 `test`，但 `.ioc` 文件名是 `Drone_softstart.ioc`，调试器也会正确找到 `Drone_softstart.elf`
+- 无需手动运行 `make gen-openocd-cfg`（但首次调试前运行一次可以提前验证配置）
+- CubeMX 重新生成代码后，调试配置会自动更新
+
 ### Debug (J-Link)
 - 使用 J-Link GDB Server
 - 设备名由 `gen_openocd_cfg.py` 从 `*.ioc` 中的 `Mcu.CPN` 自动填写
@@ -313,7 +368,7 @@ make new-project NAME=foo     # 在同级目录创建新项目，共享本模板
 
 ### Debug (OpenOCD / DAPLink)
 - 适用于 ST-Link v3 / DAPLink / CMSIS-DAP 调试器
-- 启动前自动生成 `.openocd/target.cfg`（并行执行，不增加构建时间）
+- 启动前自动生成 `.openocd/target.cfg`（顺序执行，确保配置先更新）
 - WORKAREASIZE 自动适配 MCU 的 SRAM 大小，避免 bus fault
 - 支持 Live Watch
 
@@ -393,6 +448,24 @@ PYOCD_TARGET ?= stm32f334r8tx
 
 ---
 
+### 调试时找不到 ELF 文件
+
+调试器报错找不到 `.elf` 文件，或者 `launch.json` 中的 `executable` 路径不正确。
+
+**原因**：项目文件夹名和 `.ioc` 文件名不一致，导致 ELF 文件名与 `launch.json` 中的路径不匹配。
+
+**解决**：
+1. 第一次调试时，按 `F5` 会自动运行 `gen_openocd_cfg.py` 更新配置
+2. 如果仍然有问题，手动运行：
+   ```bash
+   make gen-openocd-cfg
+   ```
+3. 验证 `launch.json` 中的 `executable` 是否已更新为正确的 `.ioc` 文件名
+
+**说明**：从此版本开始，项目名称以 `.ioc` 文件名为准，即使项目文件夹名不同，调试器也会找到正确的 ELF 文件。
+
+---
+
 ### 调试时 J-Link 设备名不对（`device: STM32XXXXXX`）
 
 `make setup`（或 `make gen-openocd-cfg`）尚未运行，或 `*.ioc` 中没有 `Mcu.CPN` 字段。
@@ -415,11 +488,33 @@ PYOCD_TARGET ?= stm32f334r8tx
 
 ### `make setup` 下载缓慢或失败
 
-脚本从 GitHub 下载，国内网络可能较慢。
+脚本从 ARM 官网和 GitHub 下载，国内网络可能较慢。
 
-**解决**：配置系统代理后重试，脚本内部使用系统代理。或者：
-- 工具链：从 [Arm GNU Toolchain 官网](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) 手动下载后解压到 `tools/toolchain/`，并手动创建 `tools/toolchain/env.mk`
-- OpenOCD：从 [xPack OpenOCD Releases](https://github.com/xpack-dev-tools/openocd-xpack/releases) 手动下载后解压到 `tools/openocd/`
+**解决方案**：
+
+**1. 配置代理**
+```bash
+# 设置系统代理后重试，脚本会自动使用系统代理
+export http_proxy=http://127.0.0.1:7890
+export https_proxy=http://127.0.0.1:7890
+make setup
+```
+
+**2. 手动下载工具链**
+- 从 [ARM 官网](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) 下载压缩包
+- 放到 `tools/toolchain/` 目录
+- 运行 `make setup-toolchain`，脚本会检测到已有压缩包并直接解压
+
+**3. 使用 Scoop 安装（Windows 推荐）**
+```powershell
+scoop install gcc-arm-none-eabi
+```
+安装后工具链自动加入 PATH，无需运行 `make setup-toolchain`。
+
+**4. 手动安装 OpenOCD**
+- 从 [xPack OpenOCD Releases](https://github.com/xpack-dev-tools/openocd-xpack/releases) 下载
+- 解压到 `tools/openocd/`
+- 运行 `make setup-openocd` 完成配置
 
 ---
 
@@ -437,9 +532,12 @@ Windows 上需要安装 `make`。
 |------|------|----------|
 | `get_toolchain.py` | 下载 ARM GNU 工具链，写入 `tools/toolchain/env.mk` | `make setup-toolchain` |
 | `get_openocd.py` | 下载 xPack OpenOCD，写入 `tools/openocd/env.mk`，更新 `settings.json` | `make setup-openocd` |
-| `get_jlink.py` | 下载 J-Link Software Pack，写入 `tools/jlink/env.mk`，更新 `settings.json` | 手动运行 |
-| `gen_openocd_cfg.py` | 生成 `.openocd/target.cfg`，下载 SVD，更新 `launch.json` | `make gen-openocd-cfg` / 调试前自动 |
+| `get_jlink.py` | 下载 J-Link Software Pack（默认 V8.40），写入 `tools/jlink/env.mk`，更新 `settings.json` | `make setup-jlink` / `make setup` |
+| `gen_openocd_cfg.py` | 生成 `.openocd/target.cfg`，下载 SVD，**自动更新 `launch.json` 中的 executable/device/svdFile** | `make gen-openocd-cfg` / **调试前自动运行** |
+| `setup_python_tools.py` | 安装 `pyocd` / `pyserial` Python 包 | `make setup-python-tools` |
 | `setup_pyocd.py` | 安装 pyOCD target pack（按需，跳过已安装的） | `make setup-pyocd` |
+| `show_tool_summary.py` | 显示当前工程和全部开发工具汇总 | `make toolchain` / `make setup` |
+| `uninstall.py` | 清理 setup 下载/生成的本地状态，可选卸载当前 Python 环境中的 `pyocd` / `pyserial` | `make uninstall` |
 | `new_project.py` | 创建新项目，复制模板文件，重定向 env.mk | `make new-project NAME=xxx` |
 
 ---

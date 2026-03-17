@@ -31,6 +31,9 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+from net_fallback import download_file as curl_download_file
+from net_fallback import fetch_bytes as curl_fetch_bytes
+
 # ── Paths ──────────────────────────────────────────────────────────────────────
 SCRIPT_DIR   = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent.parent
@@ -136,8 +139,22 @@ def get_available_versions(proxy: "str | None" = None) -> "list[tuple[str, str, 
     try:
         with opener.open(req, timeout=20) as resp:
             releases = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Cannot reach GitHub API: {exc}") from exc
+    except Exception as exc:
+        warn(f"urllib failed for GitHub API ({exc}); retrying with curl")
+        try:
+            releases = json.loads(
+                curl_fetch_bytes(
+                    GITHUB_API,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (compatible; get-openocd/1.0)",
+                        "Accept": "application/vnd.github.v3+json",
+                    },
+                    proxy=proxy,
+                    timeout=20,
+                ).decode("utf-8")
+            )
+        except RuntimeError as curl_exc:
+            raise RuntimeError(f"Cannot reach GitHub API: {curl_exc}") from exc
 
     suffix, ext = detect_platform()
 
@@ -197,11 +214,27 @@ def _download(url: str, dest: Path, proxy: "str | None" = None) -> None:
     except urllib.error.HTTPError as exc:
         print()
         raise RuntimeError(f"HTTP {exc.code} {exc.reason}: {url}") from exc
-    except Exception:
+    except Exception as exc:
         print()
-        raise
+        warn(f"urllib download failed ({exc}); retrying with curl")
+        curl_download_file(url, dest, headers=headers, proxy=proxy, timeout=0)
+        return
+
+    if total and downloaded < total:
+        warn(
+            f"Download ended early ({downloaded} of {total} bytes); retrying with curl"
+        )
+        curl_download_file(url, dest, headers=headers, proxy=proxy, timeout=0)
+        return
 
     tmp.rename(dest)
+
+    if not archive_is_valid(dest):
+        warn("Downloaded archive appears incomplete or corrupted; retrying with curl")
+        dest.unlink(missing_ok=True)
+        curl_download_file(url, dest, headers=headers, proxy=proxy, timeout=0)
+        if not archive_is_valid(dest):
+            raise RuntimeError(f"Downloaded archive is invalid: {dest.name}")
 
 
 # ── Install / extract ──────────────────────────────────────────────────────────
@@ -231,6 +264,18 @@ def install(archive: Path, dest_dir: Path) -> None:
 
     else:
         raise RuntimeError(f"Unknown package format: {archive.name}")
+
+
+def archive_is_valid(archive: Path) -> bool:
+    """Return True if *archive* looks structurally valid for its file type."""
+    if not archive.exists() or archive.stat().st_size == 0:
+        return False
+
+    if archive.suffix == ".zip":
+        return zipfile.is_zipfile(archive)
+    if archive.name.endswith((".tar.gz", ".tgz")):
+        return tarfile.is_tarfile(archive)
+    return False
 
 
 def find_openocd_exe(base: Path) -> "Path | None":
@@ -490,14 +535,22 @@ def cmd_download(
         archive_name = Path(chosen_url).name
         archive      = OPENOCD_DIR / archive_name
 
-        if archive.exists() and not Path(str(archive) + ".part").exists():
+        if archive.exists() and not Path(str(archive) + ".part").exists() and archive_is_valid(archive):
             info(f"Archive already present: {archive.name}")
         else:
+            if archive.exists() and not archive_is_valid(archive):
+                warn(f"Existing archive is invalid; removing {archive.name}")
+                archive.unlink(missing_ok=True)
             try:
                 _download(chosen_url, archive, proxy)
             except RuntimeError as exc:
                 error(str(exc))
                 sys.exit(1)
+
+        if not archive_is_valid(archive):
+            error(f"Downloaded archive is invalid: {archive.name}")
+            archive.unlink(missing_ok=True)
+            sys.exit(1)
 
         try:
             install(archive, OPENOCD_DIR)
