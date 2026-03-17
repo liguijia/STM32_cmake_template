@@ -29,6 +29,9 @@ compile_commands.json
 # Python bytecode cache
 tools/scripts/__pycache__/
 
+# Claude Code memory directory
+.claude/
+
 # STM32CubeMX generated backup files
 *.bak
 
